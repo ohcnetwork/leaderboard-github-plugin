@@ -1,0 +1,33 @@
+{
+  "name": "@leaderboard/plugin-leaderboard-github-plugin",
+  "version": "0.1.0",
+  "description": "Leaderboard github plugin",
+  "type": "module",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "scripts": {
+    "build": "tsc && esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js --packages=external",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "leaderboard",
+    "plugin"
+  ],
+  "dependencies": {
+    "@leaderboard/api": "file:../leaderboard/packages/api",
+    "date-fns": "^4.1.0",
+    "eslint": "^9.39.1",
+    "octokit": "^5.0.5",
+    "tsx": "^4.20.6",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.27",
+    "esbuild": "^0.27.2",
+    "typescript": "^5.7.3",
+    "vitest": "^4.0.16"
+  },
+  "author": "Open Healthcare Network",
+  "license": "MIT"
+}
