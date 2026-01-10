@@ -1,10 +1,13 @@
 {
-  "name": "@leaderboard/plugin-leaderboard-github-plugin",
+  "name": "@ohcnetwork/leaderboard-github-plugin",
   "version": "0.1.0",
   "description": "Leaderboard github plugin",
   "type": "module",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "scripts": {
     "build": "tsc && esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js --packages=external",
     "test": "vitest run",
@@ -14,8 +17,12 @@
     "leaderboard",
     "plugin"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ohcnetwork/leaderboard-github-plugin.git"
+  },
   "dependencies": {
-    "@leaderboard/api": "file:../leaderboard/packages/api",
+    "@ohcnetwork/leaderboard-api": "^0.1.0",
     "date-fns": "^4.1.0",
     "eslint": "^9.39.1",
     "octokit": "^5.0.5",

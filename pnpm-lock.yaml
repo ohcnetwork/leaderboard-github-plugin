@@ -8,9 +8,9 @@ importers:
 
   .:
     dependencies:
-      '@leaderboard/api':
-        specifier: file:../leaderboard/packages/api
-        version: file:../leaderboard/packages/api
+      '@ohcnetwork/leaderboard-api':
+        specifier: ^0.1.0
+        version: 0.1.0
       date-fns:
         specifier: ^4.1.0
         version: 4.1.0
@@ -255,10 +255,6 @@ packages:
   '@jridgewell/sourcemap-codec@1.5.5':
     resolution: {integrity: sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og==}
 
-  '@leaderboard/api@file:../leaderboard/packages/api':
-    resolution: {directory: ../leaderboard/packages/api, type: directory}
-    hasBin: true
-
   '@libsql/client@0.14.0':
     resolution: {integrity: sha512-/9HEKfn6fwXB5aTEEoMeFh4CtG0ZzbncBb1e++OCdVpgKZ/xyMsIVYXm0w7Pv4RUel803vE6LwniB3PqD72R0Q==}
 
@@ -419,6 +415,10 @@ packages:
   '@octokit/webhooks@14.2.0':
     resolution: {integrity: sha512-da6KbdNCV5sr1/txD896V+6W0iamFWrvVl8cHkBSPT+YlvmT3DwXa4jxZnQc+gnuTEqSWbBeoSZYTayXH9wXcw==}
     engines: {node: '>= 20'}
+
+  '@ohcnetwork/leaderboard-api@0.1.0':
+    resolution: {integrity: sha512-FJwkJnHj1SKCHdOQzhz0a/j8EiaSLwu16FJPZyR3BdZSaCBt8htPGLrwifnQQSXm/KTcwRqMtXGX+cZyC6N4zg==}
+    hasBin: true
 
   '@rollup/rollup-android-arm-eabi@4.54.0':
     resolution: {integrity: sha512-OywsdRHrFvCdvsewAInDKCNyR3laPA2mc9bRYJ6LBp5IyvF3fvXbbNR0bSzHlZVFtn6E0xw2oZlyjg4rKCVcng==}
@@ -1308,14 +1308,6 @@ snapshots:
 
   '@jridgewell/sourcemap-codec@1.5.5': {}
 
-  '@leaderboard/api@file:../leaderboard/packages/api':
-    dependencies:
-      '@libsql/client': 0.14.0
-      gray-matter: 4.0.3
-    transitivePeerDependencies:
-      - bufferutil
-      - utf-8-validate
-
   '@libsql/client@0.14.0':
     dependencies:
       '@libsql/core': 0.14.0
@@ -1520,6 +1512,14 @@ snapshots:
       '@octokit/openapi-webhooks-types': 12.1.0
       '@octokit/request-error': 7.1.0
       '@octokit/webhooks-methods': 6.0.0
+
+  '@ohcnetwork/leaderboard-api@0.1.0':
+    dependencies:
+      '@libsql/client': 0.14.0
+      gray-matter: 4.0.3
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
 
   '@rollup/rollup-android-arm-eabi@4.54.0':
     optional: true
