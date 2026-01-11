@@ -99,7 +99,7 @@ To install this package from GitHub's npm registry:
 2. Install the package:
 
 ```bash
-npm install @ohcnetwork/leaderboard-slack-plugin
+npm install @ohcnetwork/leaderboard-github-plugin
 ```
 
 
