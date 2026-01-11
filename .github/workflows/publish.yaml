@@ -1,40 +1,48 @@
-name: Publish package to GitHub Packages
+name: Release
 
 on:
   push:
     branches:
       - main
 
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
 jobs:
-  build:
+  release:
+    name: Release
     runs-on: ubuntu-latest
-
     permissions:
-      contents: read
+      contents: write
       packages: write
-
+      pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Repo
+        uses: actions/checkout@v6
 
-      - uses: pnpm/action-setup@v4
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
         with:
           version: 10
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
         with:
           node-version: 22
-          registry-url: https://npm.pkg.github.com
+          cache: "pnpm"
 
-      - name: Configure npm auth for GitHub Packages
-        run: |
-          echo "@ohcnetwork:registry=https://npm.pkg.github.com/" >> ~/.npmrc
-          echo "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}" >> ~/.npmrc
-          echo "always-auth=true" >> ~/.npmrc
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Package
+        run: pnpm build
+
+      - name: Create Release Pull Request or Publish to GitHub Packages
+        id: changesets
+        uses: changesets/action@v1
+        with:
+          version: pnpm changeset version
+          publish: pnpm changeset publish
+          commit: "chore: version packages"
+          title: "chore: version packages"
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - run: pnpm install --frozen-lockfile
-
-      - run: pnpm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

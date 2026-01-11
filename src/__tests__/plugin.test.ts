@@ -3,8 +3,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { createDatabase, initializeSchema } from "@leaderboard/api";
-import type { Database } from "@leaderboard/api";
+import { createDatabase, initializeSchema } from "@ohcnetwork/leaderboard-api";
+import type { Database } from "@ohcnetwork/leaderboard-api";
 import plugin from "../index.js";
 
 describe("Leaderboard-github-plugin Plugin", () => {

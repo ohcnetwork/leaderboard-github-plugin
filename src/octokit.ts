@@ -1,5 +1,5 @@
 import { Octokit } from "octokit";
-import { PluginConfig } from "@leaderboard/api";
+import { PluginConfig } from "@ohcnetwork/leaderboard-api";
 
 let cachedOctokit: Octokit | null = null;
 export const getOctokit = (config: PluginConfig): Octokit => {

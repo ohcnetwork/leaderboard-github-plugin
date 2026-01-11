@@ -1,4 +1,8 @@
-import { contributorQueries, Database, Logger } from "@leaderboard/api";
+import {
+  contributorQueries,
+  Database,
+  Logger,
+} from "@ohcnetwork/leaderboard-api";
 
 export async function addNewContributors(db: Database, contributors: string[]) {
   // Remove duplicates from the array
