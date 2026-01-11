@@ -4,8 +4,7 @@
   "private": false,
   "description": "Leaderboard github plugin",
   "type": "module",
-  "main": "dist/src/index.js",
-  "types": "dist/src/index.d.ts",
+  "main": "dist/index.js",
   "scripts": {
     "build": "tsc && esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js --packages=external",
     "test": "vitest run",
