@@ -1,8 +1,8 @@
 import { subDays } from "date-fns";
-import { activityQueries, Logger } from "@leaderboard/api";
+import { activityQueries, Logger } from "@ohcnetwork/leaderboard-api";
 import { Octokit } from "octokit";
-import { PluginContext } from "@leaderboard/api";
-import { Activity } from "@leaderboard/api";
+import { PluginContext } from "@ohcnetwork/leaderboard-api";
+import { Activity } from "@ohcnetwork/leaderboard-api";
 import { ActivityDefinition } from "./activity";
 import { getOctokit } from "./octokit";
 import { addNewContributors, updateBotRoles } from "@/src/db";

@@ -3,7 +3,7 @@
  */
 
 import { getActivities } from "@/src/get-activities";
-import type { Plugin, PluginContext } from "@leaderboard/api";
+import type { Plugin, PluginContext } from "@ohcnetwork/leaderboard-api";
 import { ActivityDefinition } from "./activity";
 
 const plugin: Plugin = {
