@@ -1,6 +1,6 @@
 {
   "name": "@ohcnetwork/leaderboard-github-plugin",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": false,
   "description": "Leaderboard github plugin",
   "type": "module",
