@@ -17,6 +17,7 @@
     "leaderboard",
     "plugin"
   ],
+  "packageManager": "pnpm@10.20.0",
   "dependencies": {
     "@ohcnetwork/leaderboard-api": "^0.1.0",
     "date-fns": "^4.1.0",
