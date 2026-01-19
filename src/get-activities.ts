@@ -318,6 +318,11 @@ async function getIssues({
               closed
               closedAt
               createdAt
+              issueType {
+                name
+                color
+                description
+              }
               timelineItems(itemTypes: [ASSIGNED_EVENT, CLOSED_EVENT], first: 50) {
                 nodes {
                   ... on AssignedEvent {
@@ -356,6 +361,11 @@ async function getIssues({
             closedAt: string | null;
             createdAt: string;
             closed: boolean;
+            issueType: {
+              name: string;
+              color: string | null;
+              description: string | null;
+            } | null;
             timelineItems: {
               nodes: Array<
                 | {
@@ -426,6 +436,11 @@ async function getIssues({
         closed: issue.closed,
         closed_by: closedEvent?.actor?.login ?? null,
         created_at: issue.createdAt,
+        issueType: issue.issueType ? {
+          name: issue.issueType.name,
+          color: issue.issueType.color,
+          description: issue.issueType.description,
+        } : null,
         assign_events: assignedEvents.map((e) => ({
           createdAt: e.createdAt,
           assignee: e.assignee?.login,
@@ -582,7 +597,9 @@ function activitiesFromIssues(
       occured_at: new Date(issue.created_at).toISOString(),
       link: issue.url,
       points: null,
-      meta: {},
+      meta: {
+        issueType: issue.issueType,
+      },
     });
 
     // Issue assign events
@@ -611,7 +628,9 @@ function activitiesFromIssues(
         occured_at: assignEvent.createdAt,
         link: issue.url,
         points: null,
-        meta: {},
+        meta: {
+          issueType: issue.issueType,
+        },
       };
     }
 
@@ -626,7 +645,9 @@ function activitiesFromIssues(
         occured_at: new Date(issue.closed_at).toISOString(),
         link: issue.url,
         points: null,
-        meta: {},
+        meta: {
+          issueType: issue.issueType,
+        },
       });
     }
   }
