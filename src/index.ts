@@ -1,10 +1,12 @@
-/**
+/**  
  * Leaderboard github plugin
  */
 
 import { getActivities } from "@/src/get-activities";
 import type { Plugin, PluginContext } from "@ohcnetwork/leaderboard-api";
 import { ActivityDefinition } from "./activity";
+import { calculatePrAvgTat } from "./calculate-pr-avg-tat";
+import { contributorAggregateDefinitionQueries } from "@ohcnetwork/leaderboard-api";
 
 const plugin: Plugin = {
   name: "@leaderboard/plugin-leaderboard-github-plugin",
@@ -96,6 +98,13 @@ const plugin: Plugin = {
       );
     }
 
+    await contributorAggregateDefinitionQueries.upsert(ctx.db, {
+      slug: "avg_tat",
+      name: "PR Merge Turn Around Time",
+      description: "Average time taken from opening to merging a PR",
+      hidden: false,
+    });
+
     ctx.logger.info("Setup complete");
   },
 
@@ -103,6 +112,9 @@ const plugin: Plugin = {
     ctx.logger.info("Starting leaderboard-github-plugin data scraping...");
 
     await getActivities(ctx);
+
+    await calculatePrAvgTat(ctx.db, ctx.logger);
+
     ctx.logger.info("Scraping complete");
   },
 };
