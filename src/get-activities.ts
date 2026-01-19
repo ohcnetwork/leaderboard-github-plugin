@@ -701,13 +701,13 @@ function activitiesFromPullRequests(
         link: pullRequest.url,
         points: null,
         meta: {
-          pr_avg_tat:
-            new Date(pullRequest.merged_at).getTime() -
-            new Date(pullRequest.created_at).getTime(),
+          created_at: pullRequest.created_at,
+          merged_at: pullRequest.merged_at,
+          pr_number: pullRequest.number,
+          repo: repo,
         },
       });
     }
-
     // PR review events
     for (const review of pullRequest.reviews) {
       if (!review.author) {
