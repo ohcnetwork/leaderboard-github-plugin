@@ -1,3 +1,7 @@
+/**  
+ * Leaderboard github plugin
+ */
+
 import { getActivities } from "@/src/get-activities";
 import type { Plugin, PluginContext } from "@ohcnetwork/leaderboard-api";
 import { ActivityDefinition } from "./activity";
@@ -5,7 +9,7 @@ import { calculatePrAvgTat } from "./calculate-pr-avg-tat";
 import { contributorAggregateDefinitionQueries } from "@ohcnetwork/leaderboard-api";
 
 const plugin: Plugin = {
-  name: "@Leaderboard Tasks/plugin-leaderboard-github-plugin",
+  name: "@leaderboard/plugin-leaderboard-github-plugin",
   version: "0.1.0",
 
   async setup(ctx: PluginContext) {

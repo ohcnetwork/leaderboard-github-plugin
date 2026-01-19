@@ -708,6 +708,7 @@ function activitiesFromPullRequests(
         },
       });
     }
+
     // PR review events
     for (const review of pullRequest.reviews) {
       if (!review.author) {
