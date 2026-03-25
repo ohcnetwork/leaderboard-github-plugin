@@ -8,6 +8,18 @@ importers:
 
   .:
     dependencies:
+      '@octokit/core':
+        specifier: ^7.0.6
+        version: 7.0.6
+      '@octokit/plugin-paginate-graphql':
+        specifier: ^6.0.0
+        version: 6.0.0(@octokit/core@7.0.6)
+      '@octokit/plugin-paginate-rest':
+        specifier: ^14.0.0
+        version: 14.0.0(@octokit/core@7.0.6)
+      '@octokit/plugin-rest-endpoint-methods':
+        specifier: ^17.0.0
+        version: 17.0.0(@octokit/core@7.0.6)
       '@ohcnetwork/leaderboard-api':
         specifier: ^0.1.0
         version: 0.1.0

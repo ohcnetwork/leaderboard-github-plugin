@@ -6,7 +6,7 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc && esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js --packages=external",
+    "build": "tsc && esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js --external:@libsql/client",
     "test": "vitest run",
     "test:watch": "vitest",
     "changeset": "changeset",
@@ -19,6 +19,10 @@
   ],
   "packageManager": "pnpm@10.20.0",
   "dependencies": {
+    "@octokit/core": "^7.0.6",
+    "@octokit/plugin-paginate-graphql": "^6.0.0",
+    "@octokit/plugin-paginate-rest": "^14.0.0",
+    "@octokit/plugin-rest-endpoint-methods": "^17.0.0",
     "@ohcnetwork/leaderboard-api": "^0.1.0",
     "date-fns": "^4.1.0",
     "octokit": "^5.0.5",

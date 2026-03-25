@@ -12,8 +12,33 @@ leaderboard:
     github:
       source: "@ohcnetwork/leaderboard-github-plugin"
       config:
-        # TODO: Add your plugin configuration options here
+        githubOrg: ${{ env.GITHUB_ORG }}
+        # Single token (basic):
+        githubToken: ${{ env.GITHUB_TOKEN }}
+        # Multiple tokens (recommended for large orgs to avoid rate limits):
+        # githubTokens:
+        #   - ${{ env.GITHUB_TOKEN_1 }}
+        #   - ${{ env.GITHUB_TOKEN_2 }}
+        #   - ${{ env.GITHUB_TOKEN_3 }}
 ```
+
+### Config Options
+
+| Option | Type | Required | Description |
+|--------|------|----------|-------------|
+| `githubOrg` | `string` | Yes | GitHub organization name |
+| `githubToken` | `string` | Yes* | A single GitHub personal access token |
+| `githubTokens` | `string[]` | Yes* | Array of GitHub tokens for rotation on rate limit |
+
+\* At least one of `githubToken` or `githubTokens` must be provided. When multiple tokens are supplied, the plugin automatically rotates to the next available token when one hits GitHub's rate limit, instead of waiting an hour.
+
+### Checkpoint & Recovery
+
+The plugin saves progress after each repository is scraped. If the process fails mid-way:
+
+- **Automatic resume**: Rerun the scrape and already-completed repos are skipped.
+- **Progress tracking**: Check `scrape-status.md` in your data directory for a live status table.
+- **Reset**: Delete `.scrape-progress.json` from your data directory to force a full rescrape.
 
 ## Usage
 
