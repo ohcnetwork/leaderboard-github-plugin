@@ -4,7 +4,11 @@ import {
   Logger,
 } from "@ohcnetwork/leaderboard-api";
 
-export async function addNewContributors(db: Database, contributors: string[]) {
+export async function addNewContributors(
+  db: Database,
+  contributors: string[],
+  role: string | null = null,
+) {
   // Remove duplicates from the array
   contributors = [...new Set(contributors)];
 
@@ -12,7 +16,7 @@ export async function addNewContributors(db: Database, contributors: string[]) {
     await contributorQueries.insertOrIgnore(db, {
       username: contributor,
       name: null,
-      role: null,
+      role,
       title: null,
       bio: null,
       joining_date: null,

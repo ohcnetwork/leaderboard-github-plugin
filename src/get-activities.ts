@@ -356,7 +356,7 @@ async function getComments({
 }: GitHubApiFetchOptions) {
   logger.info(`Fetching comments from ${repo}...`);
 
-  const comments = await withTokenRotation(pool, (octokit) =>
+  const comments = (await withTokenRotation(pool, (octokit) =>
     octokit.paginate(
       "GET /repos/{owner}/{repo}/issues/comments",
       { owner: org, repo, since, sort: "updated", direction: "desc" },
@@ -376,7 +376,7 @@ async function getComments({
           };
         }),
     ),
-  ) as Array<{
+  )) as Array<{
     id: string;
     issue_number: string;
     body: string;
@@ -664,14 +664,16 @@ async function getBranchCommits({
           url: commit.html_url,
         })),
     ),
-  ) as Promise<Array<{
-    commitId: string;
-    branchName: string | undefined;
-    commitMessage: string;
-    committedDate: string | null;
-    author: string | null;
-    url: string;
-  }>>;
+  ) as Promise<
+    Array<{
+      commitId: string;
+      branchName: string | undefined;
+      commitMessage: string;
+      committedDate: string | null;
+      author: string | null;
+      url: string;
+    }>
+  >;
 }
 
 function activitiesFromIssues(
@@ -890,9 +892,10 @@ async function persistRepoActivities(
   db: PluginContext["db"],
   activities: Activity[],
   logger: Logger,
+  defaultRole: string | null,
 ): Promise<number> {
   const contributorUsernames = activities.map((a) => a.contributor);
-  await addNewContributors(db, contributorUsernames);
+  await addNewContributors(db, contributorUsernames, defaultRole);
 
   let saved = 0;
   for (const activity of activities) {
@@ -910,7 +913,7 @@ async function persistRepoActivities(
 }
 
 export async function getActivities({ db, config, logger }: PluginContext) {
-  const scrapeDays = 3000;
+  const scrapeDays = 1;
   const pool = getOctokitPool(config, logger);
   const org = config.githubOrg as string;
   const dataDir = (config.dataDir as string) || undefined;
@@ -978,7 +981,15 @@ export async function getActivities({ db, config, logger }: PluginContext) {
         ...getActivitiesFromCommits(commits),
       ]);
 
-      const saved = await persistRepoActivities(db, repoActivities, logger);
+      const defaultRole =
+        typeof config.defaultRole === "string" ? config.defaultRole : null;
+
+      const saved = await persistRepoActivities(
+        db,
+        repoActivities,
+        logger,
+        defaultRole,
+      );
 
       progress.repos[repository] = {
         repo: repository,
