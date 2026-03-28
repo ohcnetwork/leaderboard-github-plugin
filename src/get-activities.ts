@@ -913,7 +913,7 @@ async function persistRepoActivities(
 }
 
 export async function getActivities({ db, config, logger }: PluginContext) {
-  const scrapeDays = 1;
+  const scrapeDays = 7;
   const pool = getOctokitPool(config, logger);
   const org = config.githubOrg as string;
   const dataDir = (config.dataDir as string) || undefined;
