@@ -17,7 +17,7 @@ interface GitHubApiFetchOptions {
   pool: OctokitPool;
   org: string;
   repo: string;
-  since?: string;
+  since: string | undefined;
   branch?: string;
   botUsers: Set<string>;
   logger: Logger;
@@ -147,20 +147,27 @@ async function getRepositories({
       "GET /orgs/{org}/repos",
       {
         org,
-        sort: "pushed",
+        sort: "updated",
+        type: "sources",
       },
     )) {
       logger.info(`Found ${response.data.length} repositories`);
       for (const repo of response.data) {
         if (
           since &&
-          repo.pushed_at &&
-          new Date(repo.pushed_at) < new Date(since)
+          repo.updated_at &&
+          new Date(repo.updated_at) < new Date(since)
         ) {
+          logger.debug(
+            `Skipping repository ${repo.name} as it is older than ${since}`,
+          );
           return repos;
         }
 
-        if (!repo.pushed_at) continue;
+        if (!repo.updated_at) {
+          logger.warn(`Repository ${repo.name} has no updated_at`);
+          continue;
+        }
 
         repos.push({
           name: repo.name,
@@ -360,8 +367,8 @@ async function getComments({
     octokit.paginate(
       "GET /repos/{owner}/{repo}/issues/comments",
       { owner: org, repo, since, sort: "updated", direction: "desc" },
-      (response: any) =>
-        response.data.map((comment: any) => {
+      (response) =>
+        response.data.map((comment) => {
           if (comment.user?.login && comment.user?.type === "Bot") {
             botUsers.add(comment.user.login);
           }
@@ -607,7 +614,7 @@ async function getCommitsFromPushEvents({
         const branchName = payload.ref.replace("refs/heads/", "");
 
         try {
-          const compareResponse: any = await withTokenRotation(pool, (oct) =>
+          const compareResponse = await withTokenRotation(pool, (oct) =>
             oct.request("GET /repos/{owner}/{repo}/compare/{basehead}", {
               owner: org,
               repo,
@@ -627,6 +634,7 @@ async function getCommitsFromPushEvents({
               committedDate: commit.commit.committer?.date ?? null,
               author: commit.author?.login ?? null,
               url: commit.html_url,
+              stats: commit.stats ?? null,
             });
           }
         } catch (error) {
@@ -649,20 +657,27 @@ async function getBranchCommits({
   org,
   repo,
   branch,
+  logger,
+  since,
 }: GitHubApiFetchOptions) {
   return withTokenRotation(pool, (octokit) =>
     octokit.paginate(
       "GET /repos/{owner}/{repo}/commits",
-      { owner: org, repo, sha: branch },
-      (response: any) =>
-        response.data.map((commit: any) => ({
+      { owner: org, repo, sha: branch, since },
+      (response) => {
+        logger.debug(
+          `Found ${response.data.length} commits on branch ${branch}`,
+        );
+        return response.data.map((commit) => ({
           commitId: commit.sha,
           branchName: branch,
           commitMessage: commit.commit.message,
           committedDate: commit.commit.committer?.date ?? null,
           author: commit.author?.login ?? null,
           url: commit.html_url,
-        })),
+          stats: commit.stats ?? null,
+        }));
+      },
     ),
   ) as Promise<
     Array<{
@@ -672,6 +687,11 @@ async function getBranchCommits({
       committedDate: string | null;
       author: string | null;
       url: string;
+      stats: {
+        additions?: number;
+        deletions?: number;
+        total?: number;
+      } | null;
     }>
   >;
 }
@@ -864,12 +884,23 @@ function activitiesFromPullRequests(
 
 function getActivitiesFromCommits(
   commits: Awaited<ReturnType<typeof getCommitsFromPushEvents>>,
+  opts: { defaultBranch: string | undefined },
 ) {
   const activities = [];
 
   for (const commit of commits) {
     if (!commit.author || !commit.committedDate) {
       continue;
+    }
+
+    let points = null;
+
+    if (
+      commit.branchName &&
+      opts.defaultBranch &&
+      opts.defaultBranch === commit.branchName
+    ) {
+      points = 2;
     }
 
     activities.push({
@@ -880,8 +911,11 @@ function getActivitiesFromCommits(
       text: commit.commitMessage,
       occured_at: new Date(commit.committedDate).toISOString(),
       link: commit.url,
-      points: null,
-      meta: {},
+      points,
+      meta: {
+        branch: commit.branchName,
+        stats: commit.stats,
+      },
     });
   }
 
@@ -948,7 +982,7 @@ export async function getActivities({ db, config, logger }: PluginContext) {
 
   const skippedRepos: string[] = [];
 
-  for (const { name: repository } of repositories) {
+  for (const { name: repository, defaultBranch } of repositories) {
     const existing = progress.repos[repository];
     if (existing?.status === "completed") {
       skippedRepos.push(repository);
@@ -967,18 +1001,28 @@ export async function getActivities({ db, config, logger }: PluginContext) {
     );
 
     try {
-      const opts = { pool, org, repo: repository, since, botUsers, logger };
+      const opts = {
+        pool,
+        org,
+        repo: repository,
+        since,
+        botUsers,
+        logger,
+        branch: defaultBranch,
+      };
 
       const repoActivities: Activity[] = await Promise.all([
         getIssues(opts),
         getComments(opts),
         getPRsAndReviews(opts),
-        scrapeDays ? getCommitsFromPushEvents(opts) : getBranchCommits(opts),
+        getBranchCommits(opts),
+        scrapeDays ? getCommitsFromPushEvents(opts) : Promise.resolve([]),
       ]).then(([issues, comments, pullRequests, commits]) => [
         ...activitiesFromIssues(issues, repository),
         ...activitiesFromComments(comments, repository),
         ...activitiesFromPullRequests(pullRequests, repository),
-        ...getActivitiesFromCommits(commits),
+        ...getActivitiesFromCommits(commits, { defaultBranch }),
+        ...getActivitiesFromCommits(commits, { defaultBranch }),
       ]);
 
       const defaultRole =

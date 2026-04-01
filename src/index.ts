@@ -75,7 +75,7 @@ const plugin: Plugin = {
         slug: ActivityDefinition.COMMITED,
         name: "Commit Created",
         description: "Pushed a commit",
-        points: 0,
+        points: null,
         icon: "git-commit-horizontal",
       },
     ];
@@ -92,7 +92,7 @@ const plugin: Plugin = {
           activity.description,
           activity.points,
           activity.icon,
-        ]
+        ],
       );
     }
 
