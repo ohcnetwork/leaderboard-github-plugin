@@ -54,7 +54,7 @@ const plugin: Plugin = {
         slug: ActivityDefinition.PR_MERGED,
         name: "PR Merged",
         description: "Merged a Pull Request",
-        points: 7,
+        points: 5,
         icon: "git-merge",
       },
       {
