@@ -2,7 +2,12 @@ import { subDays } from "date-fns";
 import { activityQueries, Logger } from "@ohcnetwork/leaderboard-api";
 import { PluginContext } from "@ohcnetwork/leaderboard-api";
 import { Activity } from "@ohcnetwork/leaderboard-api";
-import { ActivityDefinition } from "./activity";
+import {
+  ActivityDefinition,
+  type ActivityDefinitionConfig,
+  type CommitActivityDefinitionOverride,
+  getDisabledSlugs,
+} from "./activity";
 import {
   OctokitPool,
   getOctokitPool,
@@ -884,7 +889,11 @@ function activitiesFromPullRequests(
 
 function getActivitiesFromCommits(
   commits: Awaited<ReturnType<typeof getCommitsFromPushEvents>>,
-  opts: { defaultBranch: string | undefined },
+  opts: {
+    defaultBranch: string | undefined;
+    pointsOnDefaultBranch: number;
+    pointsOnNonDefaultBranch: number;
+  },
 ) {
   const activities = [];
 
@@ -893,15 +902,14 @@ function getActivitiesFromCommits(
       continue;
     }
 
-    let points = null;
-
-    if (
+    const isDefaultBranch =
       commit.branchName &&
       opts.defaultBranch &&
-      opts.defaultBranch === commit.branchName
-    ) {
-      points = 2;
-    }
+      opts.defaultBranch === commit.branchName;
+
+    const points = isDefaultBranch
+      ? opts.pointsOnDefaultBranch
+      : opts.pointsOnNonDefaultBranch;
 
     activities.push({
       slug: `${ActivityDefinition.COMMITED}_${commit.branchName}_${commit.commitId}`,
@@ -954,6 +962,16 @@ export async function getActivities({ db, config, logger }: PluginContext) {
   const since = scrapeDays
     ? subDays(new Date(), scrapeDays).toISOString()
     : undefined;
+
+  const activityDefConfig = config.activityDefinition as
+    | ActivityDefinitionConfig
+    | undefined;
+  const disabledSlugs = getDisabledSlugs(activityDefConfig);
+
+  const commitConfig = (activityDefConfig?.[ActivityDefinition.COMMITED] ??
+    {}) as CommitActivityDefinitionOverride;
+  const pointsOnDefaultBranch = commitConfig.pointsOnDefaultBranch ?? 2;
+  const pointsOnNonDefaultBranch = commitConfig.pointsOnNonDefaultBranch ?? 0;
 
   const botUsers = new Set<string>();
 
@@ -1011,19 +1029,27 @@ export async function getActivities({ db, config, logger }: PluginContext) {
         branch: defaultBranch,
       };
 
-      const repoActivities: Activity[] = await Promise.all([
-        getIssues(opts),
-        getComments(opts),
-        getPRsAndReviews(opts),
-        getBranchCommits(opts),
-        scrapeDays ? getCommitsFromPushEvents(opts) : Promise.resolve([]),
-      ]).then(([issues, comments, pullRequests, commits]) => [
-        ...activitiesFromIssues(issues, repository),
-        ...activitiesFromComments(comments, repository),
-        ...activitiesFromPullRequests(pullRequests, repository),
-        ...getActivitiesFromCommits(commits, { defaultBranch }),
-        ...getActivitiesFromCommits(commits, { defaultBranch }),
-      ]);
+      const commitOpts = {
+        defaultBranch,
+        pointsOnDefaultBranch,
+        pointsOnNonDefaultBranch,
+      };
+
+      const repoActivities: Activity[] = (
+        await Promise.all([
+          getIssues(opts),
+          getComments(opts),
+          getPRsAndReviews(opts),
+          getBranchCommits(opts),
+          scrapeDays ? getCommitsFromPushEvents(opts) : Promise.resolve([]),
+        ]).then(([issues, comments, pullRequests, commits]) => [
+          ...activitiesFromIssues(issues, repository),
+          ...activitiesFromComments(comments, repository),
+          ...activitiesFromPullRequests(pullRequests, repository),
+          ...getActivitiesFromCommits(commits, commitOpts),
+          ...getActivitiesFromCommits(commits, commitOpts),
+        ])
+      ).filter((a) => !disabledSlugs.has(a.activity_definition));
 
       const defaultRole =
         typeof config.defaultRole === "string" ? config.defaultRole : null;

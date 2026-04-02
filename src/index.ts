@@ -4,7 +4,11 @@
 
 import { getActivities } from "@/src/get-activities";
 import type { Plugin, PluginContext } from "@ohcnetwork/leaderboard-api";
-import { ActivityDefinition } from "./activity";
+import {
+  ActivityDefinition,
+  type ActivityDefinitionConfig,
+  resolveActivityDefinitions,
+} from "./activity";
 
 const plugin: Plugin = {
   name: "@leaderboard/plugin-leaderboard-github-plugin",
@@ -13,8 +17,7 @@ const plugin: Plugin = {
   async setup(ctx: PluginContext) {
     ctx.logger.info("Setting up leaderboard-github-plugin plugin...");
 
-    // Define activity types
-    const activityDefinitions = [
+    const defaults = [
       {
         slug: ActivityDefinition.COMMENTED,
         name: "Commented",
@@ -80,8 +83,16 @@ const plugin: Plugin = {
       },
     ];
 
-    // Insert activity definitions
-    for (const activity of activityDefinitions) {
+    const configOverrides = ctx.config.activityDefinition as
+      | ActivityDefinitionConfig
+      | undefined;
+
+    const { definitions } = resolveActivityDefinitions(
+      defaults,
+      configOverrides,
+    );
+
+    for (const activity of definitions) {
       await ctx.db.execute(
         `INSERT OR IGNORE INTO activity_definition
          (slug, name, description, points, icon)
