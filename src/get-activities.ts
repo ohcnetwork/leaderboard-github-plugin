@@ -723,7 +723,7 @@ function activitiesFromIssues(
       activity_definition: ActivityDefinition.ISSUE_OPENED,
       title: `Opened issue #${issue.number}`,
       text: issue.title,
-      occured_at: new Date(issue.created_at).toISOString(),
+      occurred_at: new Date(issue.created_at).toISOString(),
       link: issue.url,
       points: null,
       meta: {},
@@ -741,7 +741,7 @@ function activitiesFromIssues(
       // Skip if the assign event is older than the latest assign event for this issue
       if (
         lastestIssueAssignEvents[slug] &&
-        new Date(lastestIssueAssignEvents[slug].occured_at) >
+        new Date(lastestIssueAssignEvents[slug].occurred_at) >
           new Date(assignEvent.createdAt)
       ) {
         continue;
@@ -752,7 +752,7 @@ function activitiesFromIssues(
         activity_definition: ActivityDefinition.ISSUE_ASSIGNED,
         title: `Issue #${issue.number} assigned`,
         text: issue.title,
-        occured_at: assignEvent.createdAt,
+        occurred_at: assignEvent.createdAt,
         link: issue.url,
         points: null,
         meta: {},
@@ -767,7 +767,7 @@ function activitiesFromIssues(
         activity_definition: ActivityDefinition.ISSUE_CLOSED,
         title: `Closed issue #${issue.number}`,
         text: issue.title,
-        occured_at: new Date(issue.closed_at).toISOString(),
+        occurred_at: new Date(issue.closed_at).toISOString(),
         link: issue.url,
         points: null,
         meta: {},
@@ -800,7 +800,7 @@ function activitiesFromComments(
       activity_definition: ActivityDefinition.COMMENTED,
       title: `Commented on #${comment.issue_number}`,
       text: null,
-      occured_at: new Date(comment.created_at).toISOString(),
+      occurred_at: new Date(comment.created_at).toISOString(),
       link: comment.html_url,
       points: null,
       meta: {},
@@ -827,7 +827,7 @@ function activitiesFromPullRequests(
       activity_definition: ActivityDefinition.PR_OPENED,
       title: `Opened pull request #${pullRequest.number}`,
       text: pullRequest.title,
-      occured_at: new Date(pullRequest.created_at).toISOString(),
+      occurred_at: new Date(pullRequest.created_at).toISOString(),
       link: pullRequest.url,
       points: null,
       meta: {},
@@ -841,7 +841,7 @@ function activitiesFromPullRequests(
         activity_definition: ActivityDefinition.PR_MERGED,
         title: `Merged pull request #${pullRequest.number}`,
         text: pullRequest.title,
-        occured_at: new Date(pullRequest.merged_at).toISOString(),
+        occurred_at: new Date(pullRequest.merged_at).toISOString(),
         link: pullRequest.url,
         points: null,
         meta: {
@@ -876,7 +876,7 @@ function activitiesFromPullRequests(
         activity_definition: ActivityDefinition.PR_REVIEWED,
         title: title[review.state as keyof typeof title],
         text: pullRequest.title,
-        occured_at: new Date(review.submitted_at!).toISOString(),
+        occurred_at: new Date(review.submitted_at!).toISOString(),
         link: review.html_url,
         points: isSelfReview ? 0 : null,
         meta: {},
@@ -917,7 +917,7 @@ function getActivitiesFromCommits(
       activity_definition: ActivityDefinition.COMMITED,
       title: `Pushed commit to ${commit.branchName}`,
       text: commit.commitMessage,
-      occured_at: new Date(commit.committedDate).toISOString(),
+      occurred_at: new Date(commit.committedDate).toISOString(),
       link: commit.url,
       points,
       meta: {

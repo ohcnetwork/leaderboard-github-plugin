@@ -33,48 +33,7 @@ describe("Leaderboard-github-plugin Plugin", () => {
       debug: () => {},
     };
 
-    if (plugin.setup) {
-      await plugin.setup({
-        db,
-        config: {},
-        orgConfig: {
-          name: "Test Org",
-          description: "Test",
-          url: "https://test.com",
-          logo_url: "https://test.com/logo.png",
-        },
-        logger,
-      });
-    }
-
-    // TODO: Add assertions for your activity definitions
-  });
-
-  it("should scrape data", async () => {
-    const logger = {
-      info: () => {},
-      warn: () => {},
-      error: () => {},
-      debug: () => {},
-    };
-
-    // Setup first if needed
-    if (plugin.setup) {
-      await plugin.setup({
-        db,
-        config: {},
-        orgConfig: {
-          name: "Test Org",
-          description: "Test",
-          url: "https://test.com",
-          logo_url: "https://test.com/logo.png",
-        },
-        logger,
-      });
-    }
-
-    // Then scrape
-    await plugin.scrape({
+    await plugin.setup!({
       db,
       config: {},
       orgConfig: {
@@ -86,6 +45,32 @@ describe("Leaderboard-github-plugin Plugin", () => {
       logger,
     });
 
-    // TODO: Add assertions for scraped data
+    const result = await db.execute(
+      "SELECT slug FROM activity_definition ORDER BY slug",
+    );
+    expect(result.rows.length).toBe(9);
+  });
+
+  it("should throw when scraping without githubOrg config", async () => {
+    const logger = {
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+      debug: () => {},
+    };
+
+    await expect(
+      plugin.scrape({
+        db,
+        config: {},
+        orgConfig: {
+          name: "Test Org",
+          description: "Test",
+          url: "https://test.com",
+          logo_url: "https://test.com/logo.png",
+        },
+        logger,
+      }),
+    ).rejects.toThrow("githubOrg");
   });
 });
