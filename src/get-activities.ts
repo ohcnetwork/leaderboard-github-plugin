@@ -934,7 +934,7 @@ async function persistRepoActivities(
   db: PluginContext["db"],
   activities: Activity[],
   logger: Logger,
-  defaultRole: string | null,
+  defaultRole: string,
 ): Promise<number> {
   const contributorUsernames = activities.map((a) => a.contributor);
   await addNewContributors(db, contributorUsernames, defaultRole);
@@ -1052,7 +1052,9 @@ export async function getActivities({ db, config, logger }: PluginContext) {
       ).filter((a) => !disabledSlugs.has(a.activity_definition));
 
       const defaultRole =
-        typeof config.defaultRole === "string" ? config.defaultRole : null;
+        typeof config.defaultRole === "string"
+          ? config.defaultRole
+          : "contributor";
 
       const saved = await persistRepoActivities(
         db,

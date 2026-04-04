@@ -7,7 +7,7 @@ import {
 export async function addNewContributors(
   db: Database,
   contributors: string[],
-  role: string | null = null,
+  role: string,
 ) {
   // Remove duplicates from the array
   contributors = [...new Set(contributors)];
@@ -36,7 +36,7 @@ export async function addNewContributors(
 export async function updateBotRoles(
   db: Database,
   botUsernames: string[],
-  logger: Logger
+  logger: Logger,
 ) {
   if (botUsernames.length === 0) {
     logger.info("No bot users to update");
@@ -53,7 +53,7 @@ export async function updateBotRoles(
         SET role = 'bot'
         WHERE username = ?;
       `,
-      [username]
+      [username],
     );
 
     logger.info(`Updated ${result.rowsAffected} bot contributors`);
