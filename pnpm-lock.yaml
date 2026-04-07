@@ -21,8 +21,8 @@ importers:
         specifier: ^17.0.0
         version: 17.0.0(@octokit/core@7.0.6)
       '@ohcnetwork/leaderboard-api':
-        specifier: ^0.1.1
-        version: 0.1.1
+        specifier: ^0.2.0
+        version: 0.2.0
       date-fns:
         specifier: ^4.1.0
         version: 4.1.0
@@ -517,8 +517,8 @@ packages:
     resolution: {integrity: sha512-da6KbdNCV5sr1/txD896V+6W0iamFWrvVl8cHkBSPT+YlvmT3DwXa4jxZnQc+gnuTEqSWbBeoSZYTayXH9wXcw==}
     engines: {node: '>= 20'}
 
-  '@ohcnetwork/leaderboard-api@0.1.1':
-    resolution: {integrity: sha512-Q+VR+WUuHhF6YXGXyaDS3UO7xhgEDqXUG5QSEY6a/OcwK1OU7u+CO/aewlezD/sbgyS1kD6NYp7QwXzPjiGNGA==}
+  '@ohcnetwork/leaderboard-api@0.2.0':
+    resolution: {integrity: sha512-+ua+n94nOhG/7CzxRahm5PJHDbNtnoLpUh/fTQssAIwj7J82FMSyoAgy3mchx6Lgjc7JkqXs8XyFAdF+kf+xIA==}
     hasBin: true
 
   '@rollup/rollup-android-arm-eabi@4.60.1':
@@ -2037,7 +2037,7 @@ snapshots:
       '@octokit/request-error': 7.1.0
       '@octokit/webhooks-methods': 6.0.0
 
-  '@ohcnetwork/leaderboard-api@0.1.1':
+  '@ohcnetwork/leaderboard-api@0.2.0':
     dependencies:
       '@libsql/client': 0.14.0
       gray-matter: 4.0.3

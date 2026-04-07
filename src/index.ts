@@ -4,11 +4,13 @@
 
 import { getActivities } from "@/src/get-activities";
 import type { Plugin, PluginContext } from "@ohcnetwork/leaderboard-api";
+import { contributorAggregateDefinitionQueries } from "@ohcnetwork/leaderboard-api";
 import {
   ActivityDefinition,
   type ActivityDefinitionConfig,
   resolveActivityDefinitions,
 } from "./activity";
+import { computeAggregates } from "./compute-aggregates";
 
 const plugin: Plugin = {
   name: "@leaderboard/plugin-leaderboard-github-plugin",
@@ -107,14 +109,27 @@ const plugin: Plugin = {
       );
     }
 
+    await contributorAggregateDefinitionQueries.upsert(ctx.db, {
+      slug: "pr_avg_turn_around_time",
+      name: "Avg PR Turn Around Time",
+      description: "Average time taken for PRs to get merged",
+    });
+
     ctx.logger.info("Setup complete");
   },
 
   async scrape(ctx: PluginContext) {
     ctx.logger.info("Starting leaderboard-github-plugin data scraping...");
-
     await getActivities(ctx);
     ctx.logger.info("Scraping complete");
+  },
+
+  async aggregate(ctx) {
+    ctx.logger.info(
+      "Starting leaderboard-github-plugin aggregate computations...",
+    );
+    await computeAggregates(ctx);
+    ctx.logger.info("Aggregate computations complete");
   },
 };
 
