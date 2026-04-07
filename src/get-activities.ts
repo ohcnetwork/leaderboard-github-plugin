@@ -973,6 +973,16 @@ export async function getActivities({ db, config, logger }: PluginContext) {
   const pointsOnDefaultBranch = commitConfig.pointsOnDefaultBranch ?? 2;
   const pointsOnNonDefaultBranch = commitConfig.pointsOnNonDefaultBranch ?? 0;
 
+  const contributorBlacklist = new Set(
+    (config.blacklist as string[] | undefined) || []
+  );
+
+  if (contributorBlacklist.size > 0) {
+    logger.info(
+      `Blacklisting ${contributorBlacklist.size} contributors: ${Array.from(contributorBlacklist).join(", ")}`
+    );
+  }
+
   const botUsers = new Set<string>();
 
   const repositories = await getRepositories({
@@ -1049,7 +1059,9 @@ export async function getActivities({ db, config, logger }: PluginContext) {
           ...getActivitiesFromCommits(commits, commitOpts),
           ...getActivitiesFromCommits(commits, commitOpts),
         ])
-      ).filter((a) => !disabledSlugs.has(a.activity_definition));
+      )
+        .filter((a) => !disabledSlugs.has(a.activity_definition))
+        .filter((a) => !contributorBlacklist.has(a.contributor));
 
       const defaultRole =
         typeof config.defaultRole === "string"

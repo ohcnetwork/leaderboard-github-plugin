@@ -20,6 +20,10 @@ leaderboard:
         #   - ${{ env.GITHUB_TOKEN_1 }}
         #   - ${{ env.GITHUB_TOKEN_2 }}
         #   - ${{ env.GITHUB_TOKEN_3 }}
+        # Optional: Blacklist contributors (exclude from tracking):
+        # blacklist:
+        #   - invalid-email-address
+        #   - bot-account
 ```
 
 ### Config Options
@@ -29,6 +33,7 @@ leaderboard:
 | `githubOrg` | `string` | Yes | GitHub organization name |
 | `githubToken` | `string` | Yes* | A single GitHub personal access token |
 | `githubTokens` | `string[]` | Yes* | Array of GitHub tokens for rotation on rate limit |
+| `blacklist` | `string[]` | No | Array of GitHub usernames to exclude from tracking |
 
 \* At least one of `githubToken` or `githubTokens` must be provided. When multiple tokens are supplied, the plugin automatically rotates to the next available token when one hits GitHub's rate limit, instead of waiting an hour.
 
