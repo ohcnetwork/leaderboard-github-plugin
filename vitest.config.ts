@@ -10,6 +10,9 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "node",
+    env: {
+      WORKSPACE_ROOT: "/tmp",
+    },
     server: {
       deps: {
         inline: ["@ohcnetwork/leaderboard-api"],
