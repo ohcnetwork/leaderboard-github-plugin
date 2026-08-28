@@ -94,6 +94,17 @@ export class OctokitPool {
   }
 }
 
+/**
+ * Raised when GitHub answers with a well-formed HTTP response whose payload is
+ * missing the data the query asked for (degraded/partial responses).
+ */
+export class GitHubResponseShapeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "GitHubResponseShapeError";
+  }
+}
+
 function parseRetryAfter(error: unknown): number {
   const err = error as {
     response?: {
@@ -155,31 +166,135 @@ export function isRateLimitError(error: unknown): boolean {
   return false;
 }
 
+const TRANSIENT_STATUSES = new Set([408, 500, 502, 503, 504, 520, 522, 524]);
+
+const TRANSIENT_MESSAGE_PATTERNS = [
+  "couldn't respond to your request in time",
+  "<!doctype html",
+  "timeout",
+  "timed out",
+  "socket hang up",
+  "econnreset",
+  "etimedout",
+  "econnrefused",
+  "eai_again",
+  "fetch failed",
+  "terminated",
+  "bad gateway",
+  "service unavailable",
+  "server error",
+];
+
+/**
+ * Errors worth retrying: GitHub availability blips, query timeouts, and the
+ * HTML error pages GitHub serves instead of JSON when a backend is degraded.
+ */
+export function isTransientError(error: unknown): boolean {
+  if (error instanceof GitHubResponseShapeError) return true;
+
+  const err = error as {
+    status?: number;
+    message?: string;
+    response?: { status?: number };
+  };
+
+  const status = err.status ?? err.response?.status;
+  if (status !== undefined && TRANSIENT_STATUSES.has(status)) return true;
+
+  const message = (err.message ?? "").toLowerCase();
+  return TRANSIENT_MESSAGE_PATTERNS.some((pattern) =>
+    message.includes(pattern),
+  );
+}
+
+/**
+ * GitHub rejected the GraphQL query because it asked for too many nodes.
+ * Retrying is pointless unless the page size shrinks first.
+ */
+export function isNodeLimitError(error: unknown): boolean {
+  const message = (error as { message?: string }).message ?? "";
+  return (
+    message.includes("MAX_NODE_LIMIT_EXCEEDED") ||
+    message.includes("exceeds the maximum number of nodes")
+  );
+}
+
+/**
+ * Collapses an error into a single short line — GitHub's HTML error pages are
+ * kilobytes long and would otherwise flood logs and error reports.
+ */
+export function describeError(error: unknown, maxLength = 200): string {
+  const raw =
+    error instanceof Error ? error.message : String(error ?? "unknown error");
+  const collapsed = raw.replace(/\s+/g, " ").trim();
+  return collapsed.length > maxLength
+    ? `${collapsed.slice(0, maxLength)}…`
+    : collapsed;
+}
+
+const DEFAULT_MAX_TRANSIENT_RETRIES = 4;
+const BASE_BACKOFF_MS = 1_000;
+const MAX_BACKOFF_MS = 30_000;
+
+function backoffDelay(attempt: number): number {
+  const ceiling = Math.min(BASE_BACKOFF_MS * 2 ** attempt, MAX_BACKOFF_MS);
+  return ceiling / 2 + Math.random() * (ceiling / 2);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export interface WithTokenRotationOptions {
+  maxTransientRetries?: number;
+  /** Human-readable description of the request, used in retry logs. */
+  label?: string;
+}
+
 export async function withTokenRotation<T>(
   pool: OctokitPool,
   fn: (octokit: Octokit) => Promise<T>,
+  options: WithTokenRotationOptions = {},
 ): Promise<T> {
+  const maxTransientRetries =
+    options.maxTransientRetries ?? DEFAULT_MAX_TRANSIENT_RETRIES;
+  const label = options.label ? ` for ${options.label}` : "";
+  let transientAttempts = 0;
+
   while (true) {
     try {
       return await fn(pool.current);
     } catch (error) {
-      if (!isRateLimitError(error)) throw error;
+      if (isRateLimitError(error)) {
+        const retryAfterMs = parseRetryAfter(error);
+        pool.markRateLimited(retryAfterMs);
 
-      const retryAfterMs = parseRetryAfter(error);
-      pool.markRateLimited(retryAfterMs);
+        if (pool.rotate()) {
+          continue;
+        }
 
-      if (pool.rotate()) {
+        const waitUntil = pool.earliestAvailableAt();
+        const waitMs = waitUntil - Date.now();
+        if (waitMs > 0) {
+          pool.logger.warn(
+            `All ${pool.size} tokens rate-limited. Waiting ${Math.ceil(waitMs / 1000)}s for next available token...`,
+          );
+          await sleep(waitMs + 1000);
+        }
         continue;
       }
 
-      const waitUntil = pool.earliestAvailableAt();
-      const waitMs = waitUntil - Date.now();
-      if (waitMs > 0) {
+      if (isTransientError(error) && transientAttempts < maxTransientRetries) {
+        const delay = backoffDelay(transientAttempts);
+        transientAttempts++;
         pool.logger.warn(
-          `All ${pool.size} tokens rate-limited. Waiting ${Math.ceil(waitMs / 1000)}s for next available token...`,
+          `Transient GitHub error${label} (attempt ${transientAttempts}/${maxTransientRetries}), retrying in ${Math.ceil(delay / 1000)}s: ${describeError(error)}`,
         );
-        await new Promise((resolve) => setTimeout(resolve, waitMs + 1000));
+        await sleep(delay);
+        continue;
       }
+
+      throw error;
     }
   }
 }

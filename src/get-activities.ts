@@ -12,7 +12,9 @@ import {
   OctokitPool,
   getOctokitPool,
   withTokenRotation,
-  isRateLimitError,
+  describeError,
+  isNodeLimitError,
+  GitHubResponseShapeError,
 } from "./octokit";
 import { addNewContributors, updateBotRoles } from "@/src/db";
 import { writeFile, readFile, mkdir } from "fs/promises";
@@ -28,12 +30,35 @@ interface GitHubApiFetchOptions {
   logger: Logger;
 }
 
+/**
+ * Result of a single data source within a repository. `partial` means some
+ * pages were fetched successfully before an unrecoverable error stopped the
+ * pagination — the items collected so far are still usable.
+ */
+interface FetchResult<T> {
+  items: T[];
+  partial: boolean;
+  error?: string;
+}
+
+function complete<T>(items: T[]): FetchResult<T> {
+  return { items, partial: false };
+}
+
+type SourceStatus = "completed" | "partial" | "failed";
+
+interface SourceProgress {
+  status: SourceStatus;
+  error?: string;
+}
+
 interface RepoProgress {
   repo: string;
-  status: "completed" | "failed" | "in_progress";
+  status: "completed" | "partial" | "failed" | "in_progress";
   activitiesCount: number;
   error?: string;
   completedAt?: string;
+  sources?: Record<string, SourceProgress>;
 }
 
 interface ScrapeProgress {
@@ -42,6 +67,7 @@ interface ScrapeProgress {
   updatedAt: string;
   totalRepos: number;
   completedRepos: number;
+  partialRepos: number;
   failedRepos: number;
   totalActivities: number;
   repos: Record<string, RepoProgress>;
@@ -77,18 +103,25 @@ async function saveProgress(
   await writeProgressMarkdown(progress, dataDir);
 }
 
+const STATUS_ICONS: Record<string, string> = {
+  completed: "✅",
+  partial: "⚠️",
+  failed: "❌",
+  in_progress: "⏳",
+};
+
 async function writeProgressMarkdown(
   progress: ScrapeProgress,
   dataDir?: string,
 ): Promise<void> {
-  const completedRepos = Object.values(progress.repos).filter(
-    (r) => r.status === "completed",
-  );
-  const failedRepos = Object.values(progress.repos).filter(
-    (r) => r.status === "failed",
-  );
+  const countByStatus = (status: RepoProgress["status"]) =>
+    Object.values(progress.repos).filter((r) => r.status === status).length;
+
+  const completedCount = countByStatus("completed");
+  const partialCount = countByStatus("partial");
+  const failedCount = countByStatus("failed");
   const pendingCount =
-    progress.totalRepos - completedRepos.length - failedRepos.length;
+    progress.totalRepos - completedCount - partialCount - failedCount;
 
   const lines = [
     `# Scrape Progress`,
@@ -102,8 +135,9 @@ async function writeProgressMarkdown(
     `| Metric | Value |`,
     `|--------|-------|`,
     `| Total Repos | ${progress.totalRepos} |`,
-    `| Completed | ${completedRepos.length} |`,
-    `| Failed | ${failedRepos.length} |`,
+    `| Completed | ${completedCount} |`,
+    `| Partial | ${partialCount} |`,
+    `| Failed | ${failedCount} |`,
     `| Pending | ${pendingCount} |`,
     `| Total Activities | ${progress.totalActivities} |`,
     ``,
@@ -117,12 +151,35 @@ async function writeProgressMarkdown(
   let i = 1;
   for (const name of allRepoNames) {
     const r = progress.repos[name]!;
-    const icon =
-      r.status === "completed" ? "✅" : r.status === "failed" ? "❌" : "⏳";
+    const icon = STATUS_ICONS[r.status] ?? "⏳";
     const err = r.error ? ` (${r.error})` : "";
     lines.push(
       `| ${i++} | ${r.repo} | ${icon} ${r.status}${err} | ${r.activitiesCount} | ${r.completedAt ?? "-"} |`,
     );
+  }
+
+  const degraded = allRepoNames
+    .map((name) => progress.repos[name]!)
+    .filter((r) =>
+      Object.values(r.sources ?? {}).some((s) => s.status !== "completed"),
+    );
+
+  if (degraded.length > 0) {
+    lines.push(
+      ``,
+      `## Source Failures`,
+      ``,
+      `| Repository | Source | Status | Error |`,
+      `|------------|--------|--------|-------|`,
+    );
+    for (const repo of degraded) {
+      for (const [source, state] of Object.entries(repo.sources ?? {})) {
+        if (state.status === "completed") continue;
+        lines.push(
+          `| ${repo.repo} | ${source} | ${STATUS_ICONS[state.status] ?? ""} ${state.status} | ${state.error ?? "-"} |`,
+        );
+      }
+    }
   }
 
   if (pendingCount > 0) {
@@ -187,6 +244,33 @@ async function getRepositories({
 }
 
 /**
+ * GitHub answers with `{}` or `{ repository: null }` when a query is degraded
+ * or partially resolved, so the payload has to be checked before use.
+ */
+function assertRepositoryPayload<K extends string>(
+  response: unknown,
+  repo: string,
+  field: K,
+): asserts response is Record<"repository", Record<K, unknown>> {
+  const repository = (response as { repository?: unknown } | undefined)
+    ?.repository;
+
+  if (repository == null || (repository as Record<K, unknown>)[field] == null) {
+    throw new GitHubResponseShapeError(
+      `GraphQL response for ${repo} did not include repository.${field}`,
+    );
+  }
+}
+
+/**
+ * Descending page sizes tried in order. Large repositories exceed GitHub's
+ * GraphQL node budget or query timeout at the higher sizes.
+ */
+const PR_PAGE_SIZES = [50, 25, 10] as const;
+const ISSUE_PAGE_SIZES = [50, 25, 10] as const;
+const REST_PAGE_SIZE = 100;
+
+/**
  * Get all pull requests and their reviews from a repository using GraphQL
  * If since is provided, only get pull requests updated since the date
  * @param repo - The repository to get pull requests from
@@ -201,19 +285,38 @@ async function getPRsAndReviews({
   botUsers,
   logger,
 }: GitHubApiFetchOptions) {
-  const pullRequests = [];
+  type PullRequestRecord = {
+    number: number;
+    title: string;
+    url: string;
+    author: string | null;
+    updated_at: string;
+    created_at: string;
+    merged_at: string | null;
+    merged_by: string | null;
+    reviews: Array<{
+      id: string;
+      author: string | null;
+      state: string;
+      submitted_at: string | null;
+      html_url: string | null;
+    }>;
+  };
+
+  const pullRequests: PullRequestRecord[] = [];
 
   let hasNextPage = true;
   let cursor: string | null = null;
+  let pageSizeIndex = 0;
 
   logger.info(`Fetching pull requests from ${repo}...`);
 
   while (hasNextPage) {
     const query = `
-      query($owner: String!, $repo: String!, $cursor: String) {
+      query($owner: String!, $repo: String!, $cursor: String, $pageSize: Int!, $reviewCount: Int!) {
         repository(owner: $owner, name: $repo) {
           pullRequests(
-            first: 100
+            first: $pageSize
             orderBy: { field: UPDATED_AT, direction: DESC }
             after: $cursor
           ) {
@@ -236,7 +339,7 @@ async function getPRsAndReviews({
                 __typename
                 login
               }
-              reviews(first: 100) {
+              reviews(first: $reviewCount) {
                 nodes {
                   id
                   author {
@@ -262,7 +365,7 @@ async function getPRsAndReviews({
       }
     `;
 
-    const response: {
+    type PullRequestPage = {
       repository: {
         pullRequests: {
           nodes: Array<{
@@ -296,13 +399,44 @@ async function getPRsAndReviews({
           };
         };
       };
-    } = await withTokenRotation(pool, (octokit) =>
-      octokit.graphql(query, {
-        owner: org,
-        repo,
-        cursor,
-      }),
-    );
+    };
+
+    const pageSize = PR_PAGE_SIZES[pageSizeIndex]!;
+    let response: PullRequestPage;
+
+    try {
+      const raw = await withTokenRotation(
+        pool,
+        (octokit) =>
+          octokit.graphql(query, {
+            owner: org,
+            repo,
+            cursor,
+            pageSize,
+            reviewCount: pageSize,
+          }),
+        { label: `pull requests of ${repo}` },
+      );
+      assertRepositoryPayload(raw, repo, "pullRequests");
+      response = raw as PullRequestPage;
+    } catch (error) {
+      if (pageSizeIndex < PR_PAGE_SIZES.length - 1) {
+        pageSizeIndex++;
+        logger.warn(
+          `Pull request query for ${repo} failed at page size ${pageSize}, retrying with ${PR_PAGE_SIZES[pageSizeIndex]}: ${describeError(error)}`,
+        );
+        continue;
+      }
+
+      logger.warn(
+        `Giving up on pull requests for ${repo} after ${pullRequests.length} fetched${isNodeLimitError(error) ? " (query too large)" : ""}: ${describeError(error)}`,
+      );
+      return {
+        items: pullRequests,
+        partial: true,
+        error: describeError(error),
+      } satisfies FetchResult<PullRequestRecord>;
+    }
 
     const prs = response.repository.pullRequests.nodes;
 
@@ -310,7 +444,7 @@ async function getPRsAndReviews({
 
     for (const pr of prs) {
       if (since && pr.updatedAt && new Date(pr.updatedAt) < new Date(since)) {
-        return pullRequests;
+        return complete(pullRequests);
       }
 
       if (!pr.updatedAt) continue;
@@ -355,7 +489,7 @@ async function getPRsAndReviews({
     cursor = response.repository.pullRequests.pageInfo.endCursor;
   }
 
-  return pullRequests;
+  return complete(pullRequests);
 }
 
 async function getComments({
@@ -368,38 +502,69 @@ async function getComments({
 }: GitHubApiFetchOptions) {
   logger.info(`Fetching comments from ${repo}...`);
 
-  const comments = (await withTokenRotation(pool, (octokit) =>
-    octokit.paginate(
-      "GET /repos/{owner}/{repo}/issues/comments",
-      { owner: org, repo, since, sort: "updated", direction: "desc" },
-      (response) =>
-        response.data.map((comment) => {
-          if (comment.user?.login && comment.user?.type === "Bot") {
-            botUsers.add(comment.user.login);
-          }
-
-          return {
-            id: comment.node_id,
-            issue_number: comment.issue_url.split("/").pop(),
-            body: comment.body,
-            created_at: comment.created_at,
-            author: comment.user?.login,
-            html_url: comment.html_url,
-          };
-        }),
-    ),
-  )) as Array<{
+  type CommentRecord = {
     id: string;
-    issue_number: string;
-    body: string;
+    issue_number: string | undefined;
+    body: string | undefined;
     created_at: string;
     author: string | undefined;
     html_url: string;
-  }>;
+  };
+
+  const comments: CommentRecord[] = [];
+  let page = 1;
+
+  while (true) {
+    let data;
+    try {
+      const response = await withTokenRotation(
+        pool,
+        (octokit) =>
+          octokit.request("GET /repos/{owner}/{repo}/issues/comments", {
+            owner: org,
+            repo,
+            since,
+            sort: "updated",
+            direction: "desc",
+            per_page: REST_PAGE_SIZE,
+            page,
+          }),
+        { label: `comments of ${repo} (page ${page})` },
+      );
+      data = response.data;
+    } catch (error) {
+      logger.warn(
+        `Giving up on comments for ${repo} after ${comments.length} fetched: ${describeError(error)}`,
+      );
+      return {
+        items: comments,
+        partial: true,
+        error: describeError(error),
+      } satisfies FetchResult<CommentRecord>;
+    }
+
+    for (const comment of data) {
+      if (comment.user?.login && comment.user?.type === "Bot") {
+        botUsers.add(comment.user.login);
+      }
+
+      comments.push({
+        id: comment.node_id,
+        issue_number: comment.issue_url.split("/").pop(),
+        body: comment.body,
+        created_at: comment.created_at,
+        author: comment.user?.login,
+        html_url: comment.html_url,
+      });
+    }
+
+    if (data.length < REST_PAGE_SIZE) break;
+    page++;
+  }
 
   logger.info(`Found ${comments.length} comments`);
 
-  return comments;
+  return complete(comments);
 }
 
 /**
@@ -418,18 +583,34 @@ async function getIssues({
   botUsers,
   logger,
 }: GitHubApiFetchOptions) {
-  const issues = [];
+  type IssueRecord = {
+    number: number;
+    title: string;
+    url: string;
+    author: string | null | undefined;
+    closed_at: string | null;
+    closed: boolean;
+    closed_by: string | null;
+    created_at: string;
+    assign_events: Array<{
+      createdAt: string;
+      assignee: string | null | undefined;
+    }>;
+  };
+
+  const issues: IssueRecord[] = [];
 
   let hasNextPage = true;
   let cursor: string | null = null;
+  let pageSizeIndex = 0;
 
   logger.info(`Fetching issues from ${repo}...`);
 
   while (hasNextPage) {
     const query = `
-      query($owner: String!, $repo: String!, $cursor: String) {
+      query($owner: String!, $repo: String!, $cursor: String, $pageSize: Int!) {
         repository(owner: $owner, name: $repo) {
-          issues(first: 50, orderBy: { field: UPDATED_AT, direction: DESC }, after: $cursor) {
+          issues(first: $pageSize, orderBy: { field: UPDATED_AT, direction: DESC }, after: $cursor) {
             pageInfo {
               hasNextPage
               endCursor
@@ -472,7 +653,7 @@ async function getIssues({
       }
     `;
 
-    const response: {
+    type IssuePage = {
       repository: {
         issues: {
           nodes: Array<{
@@ -506,15 +687,44 @@ async function getIssues({
           };
         };
       };
-    } = await withTokenRotation(pool, (octokit) =>
-      octokit.graphql(query, { owner: org, repo, cursor }),
-    );
+    };
+
+    const pageSize = ISSUE_PAGE_SIZES[pageSizeIndex]!;
+    let response: IssuePage;
+
+    try {
+      const raw = await withTokenRotation(
+        pool,
+        (octokit) =>
+          octokit.graphql(query, { owner: org, repo, cursor, pageSize }),
+        { label: `issues of ${repo}` },
+      );
+      assertRepositoryPayload(raw, repo, "issues");
+      response = raw as IssuePage;
+    } catch (error) {
+      if (pageSizeIndex < ISSUE_PAGE_SIZES.length - 1) {
+        pageSizeIndex++;
+        logger.warn(
+          `Issue query for ${repo} failed at page size ${pageSize}, retrying with ${ISSUE_PAGE_SIZES[pageSizeIndex]}: ${describeError(error)}`,
+        );
+        continue;
+      }
+
+      logger.warn(
+        `Giving up on issues for ${repo} after ${issues.length} fetched${isNodeLimitError(error) ? " (query too large)" : ""}: ${describeError(error)}`,
+      );
+      return {
+        items: issues,
+        partial: true,
+        error: describeError(error),
+      } satisfies FetchResult<IssueRecord>;
+    }
 
     const allIssues = response.repository.issues.nodes;
 
     for (const issue of allIssues) {
       if (since && new Date(issue.updatedAt) < new Date(since)) {
-        return issues;
+        return complete(issues);
       }
 
       if (issue.author?.login && issue.author.__typename === "Bot") {
@@ -565,7 +775,21 @@ async function getIssues({
     cursor = response.repository.issues.pageInfo.endCursor;
   }
 
-  return issues;
+  return complete(issues);
+}
+
+interface CommitRecord {
+  commitId: string;
+  branchName: string | undefined;
+  commitMessage: string;
+  committedDate: string | null;
+  author: string | null;
+  url: string;
+  stats: {
+    additions?: number;
+    deletions?: number;
+    total?: number;
+  } | null;
 }
 
 /**
@@ -581,80 +805,98 @@ async function getCommitsFromPushEvents({
   since,
   botUsers,
   logger,
-}: GitHubApiFetchOptions): ReturnType<typeof getBranchCommits> {
-  return withTokenRotation(pool, async (octokit) => {
-    const commits = [];
+}: GitHubApiFetchOptions): Promise<FetchResult<CommitRecord>> {
+  const commits: CommitRecord[] = [];
+  let page = 1;
 
-    for await (const response of octokit.paginate.iterator(
-      "GET /repos/{owner}/{repo}/events",
-      {
-        owner: org,
-        repo,
-        per_page: 100,
-      },
-    )) {
-      for (const event of response.data) {
-        if (
-          since &&
-          event.created_at &&
-          new Date(event.created_at) < new Date(since)
-        ) {
-          return commits;
-        }
+  while (true) {
+    let events;
+    try {
+      const response = await withTokenRotation(
+        pool,
+        (octokit) =>
+          octokit.request("GET /repos/{owner}/{repo}/events", {
+            owner: org,
+            repo,
+            per_page: REST_PAGE_SIZE,
+            page,
+          }),
+        { label: `events of ${repo} (page ${page})` },
+      );
+      events = response.data;
+    } catch (error) {
+      logger.warn(
+        `Giving up on push events for ${repo} after ${commits.length} commits: ${describeError(error)}`,
+      );
+      return { items: commits, partial: true, error: describeError(error) };
+    }
 
-        if (event.type !== "PushEvent") {
-          continue;
-        }
+    for (const event of events) {
+      if (
+        since &&
+        event.created_at &&
+        new Date(event.created_at) < new Date(since)
+      ) {
+        return complete(commits);
+      }
 
-        const payload = event.payload as {
-          head?: string;
-          before?: string;
-          ref?: string;
-        };
+      if (event.type !== "PushEvent") {
+        continue;
+      }
 
-        if (!payload.head || !payload.before || !payload.ref) {
-          continue;
-        }
+      const payload = event.payload as {
+        head?: string;
+        before?: string;
+        ref?: string;
+      };
 
-        const branchName = payload.ref.replace("refs/heads/", "");
+      if (!payload.head || !payload.before || !payload.ref) {
+        continue;
+      }
 
-        try {
-          const compareResponse = await withTokenRotation(pool, (oct) =>
+      const branchName = payload.ref.replace("refs/heads/", "");
+
+      try {
+        const compareResponse = await withTokenRotation(
+          pool,
+          (oct) =>
             oct.request("GET /repos/{owner}/{repo}/compare/{basehead}", {
               owner: org,
               repo,
               basehead: `${payload.before}...${payload.head}`,
             }),
-          );
+          { label: `compare ${payload.before}...${payload.head} in ${repo}` },
+        );
 
-          for (const commit of compareResponse.data.commits) {
-            if (commit.author?.login && commit.author?.type === "Bot") {
-              botUsers.add(commit.author.login);
-            }
-
-            commits.push({
-              commitId: commit.sha,
-              branchName,
-              commitMessage: commit.commit.message?.split("\n")[0] ?? "",
-              committedDate: commit.commit.committer?.date ?? null,
-              author: commit.author?.login ?? null,
-              url: commit.html_url,
-              stats: commit.stats ?? null,
-            });
+        for (const commit of compareResponse.data.commits) {
+          if (commit.author?.login && commit.author?.type === "Bot") {
+            botUsers.add(commit.author.login);
           }
-        } catch (error) {
-          if (isRateLimitError(error)) throw error;
-          logger.error(
-            `Failed to compare ${payload.before}...${payload.head} in ${repo}:`,
-            error as Error,
-          );
-          continue;
+
+          commits.push({
+            commitId: commit.sha,
+            branchName,
+            commitMessage: commit.commit.message?.split("\n")[0] ?? "",
+            committedDate: commit.commit.committer?.date ?? null,
+            author: commit.author?.login ?? null,
+            url: commit.html_url,
+            stats: commit.stats ?? null,
+          });
         }
+      } catch (error) {
+        // A single unreachable comparison must not discard the rest of the page.
+        logger.warn(
+          `Failed to compare ${payload.before}...${payload.head} in ${repo}: ${describeError(error)}`,
+        );
+        continue;
       }
     }
 
-    return commits;
-  });
+    if (events.length < REST_PAGE_SIZE) break;
+    page++;
+  }
+
+  return complete(commits);
 }
 
 async function getBranchCommits({
@@ -664,45 +906,57 @@ async function getBranchCommits({
   branch,
   logger,
   since,
-}: GitHubApiFetchOptions) {
-  return withTokenRotation(pool, (octokit) =>
-    octokit.paginate(
-      "GET /repos/{owner}/{repo}/commits",
-      { owner: org, repo, sha: branch, since },
-      (response) => {
-        logger.debug(
-          `Found ${response.data.length} commits on branch ${branch}`,
-        );
-        return response.data.map((commit) => ({
-          commitId: commit.sha,
-          branchName: branch,
-          commitMessage: commit.commit.message,
-          committedDate: commit.commit.committer?.date ?? null,
-          author: commit.author?.login ?? null,
-          url: commit.html_url,
-          stats: commit.stats ?? null,
-        }));
-      },
-    ),
-  ) as Promise<
-    Array<{
-      commitId: string;
-      branchName: string | undefined;
-      commitMessage: string;
-      committedDate: string | null;
-      author: string | null;
-      url: string;
-      stats: {
-        additions?: number;
-        deletions?: number;
-        total?: number;
-      } | null;
-    }>
-  >;
+}: GitHubApiFetchOptions): Promise<FetchResult<CommitRecord>> {
+  const commits: CommitRecord[] = [];
+  let page = 1;
+
+  while (true) {
+    let data;
+    try {
+      const response = await withTokenRotation(
+        pool,
+        (octokit) =>
+          octokit.request("GET /repos/{owner}/{repo}/commits", {
+            owner: org,
+            repo,
+            sha: branch,
+            since,
+            per_page: REST_PAGE_SIZE,
+            page,
+          }),
+        { label: `commits on ${branch} of ${repo} (page ${page})` },
+      );
+      data = response.data;
+    } catch (error) {
+      logger.warn(
+        `Giving up on branch commits for ${repo} after ${commits.length} fetched: ${describeError(error)}`,
+      );
+      return { items: commits, partial: true, error: describeError(error) };
+    }
+
+    logger.debug(`Found ${data.length} commits on branch ${branch}`);
+
+    for (const commit of data) {
+      commits.push({
+        commitId: commit.sha,
+        branchName: branch,
+        commitMessage: commit.commit.message,
+        committedDate: commit.commit.committer?.date ?? null,
+        author: commit.author?.login ?? null,
+        url: commit.html_url,
+        stats: commit.stats ?? null,
+      });
+    }
+
+    if (data.length < REST_PAGE_SIZE) break;
+    page++;
+  }
+
+  return complete(commits);
 }
 
 function activitiesFromIssues(
-  issues: Awaited<ReturnType<typeof getIssues>>,
+  issues: Awaited<ReturnType<typeof getIssues>>["items"],
   repo: string,
 ) {
   const activities = [];
@@ -784,7 +1038,7 @@ function activitiesFromIssues(
 }
 
 function activitiesFromComments(
-  comments: Awaited<ReturnType<typeof getComments>>,
+  comments: Awaited<ReturnType<typeof getComments>>["items"],
   repo: string,
 ) {
   const activities = [];
@@ -810,7 +1064,7 @@ function activitiesFromComments(
 }
 
 function activitiesFromPullRequests(
-  pullRequests: Awaited<ReturnType<typeof getPRsAndReviews>>,
+  pullRequests: Awaited<ReturnType<typeof getPRsAndReviews>>["items"],
   repo: string,
 ) {
   const activities = [];
@@ -888,7 +1142,7 @@ function activitiesFromPullRequests(
 }
 
 function getActivitiesFromCommits(
-  commits: Awaited<ReturnType<typeof getCommitsFromPushEvents>>,
+  commits: CommitRecord[],
   opts: {
     defaultBranch: string | undefined;
     pointsOnDefaultBranch: number;
@@ -940,17 +1194,29 @@ async function persistRepoActivities(
   await addNewContributors(db, contributorUsernames, defaultRole);
 
   let saved = 0;
+  let failed = 0;
+  let firstError: Error | undefined;
+
   for (const activity of activities) {
     try {
       await activityQueries.upsert(db, activity);
       saved++;
     } catch (error) {
-      logger.error(
-        `Failed to upsert activity: ${activity.slug}`,
-        error as Error,
+      failed++;
+      firstError ??= error as Error;
+      logger.debug(
+        `Failed to upsert activity ${activity.slug}: ${describeError(error)}`,
       );
     }
   }
+
+  if (failed > 0) {
+    logger.error(
+      `Failed to upsert ${failed} of ${activities.length} activities`,
+      firstError,
+    );
+  }
+
   return saved;
 }
 
@@ -1003,12 +1269,23 @@ export async function getActivities({ db, config, logger }: PluginContext) {
     updatedAt: new Date().toISOString(),
     totalRepos: repositories.length,
     completedRepos: existingProgress?.completedRepos ?? 0,
+    partialRepos: existingProgress?.partialRepos ?? 0,
     failedRepos: existingProgress?.failedRepos ?? 0,
     totalActivities: existingProgress?.totalActivities ?? 0,
     repos: existingProgress?.repos ?? {},
   };
 
+  const recountStatuses = () => {
+    const values = Object.values(progress.repos);
+    progress.completedRepos = values.filter(
+      (r) => r.status === "completed",
+    ).length;
+    progress.partialRepos = values.filter((r) => r.status === "partial").length;
+    progress.failedRepos = values.filter((r) => r.status === "failed").length;
+  };
+
   const skippedRepos: string[] = [];
+  let processedRepos = 0;
 
   for (const { name: repository, defaultBranch } of repositories) {
     const existing = progress.repos[repository];
@@ -1025,49 +1302,105 @@ export async function getActivities({ db, config, logger }: PluginContext) {
     await saveProgress(progress, dataDir);
 
     logger.info(
-      `[${Object.values(progress.repos).filter((r) => r.status === "completed").length + 1}/${repositories.length}] Scraping ${repository}...`,
+      `[${++processedRepos}/${repositories.length - skippedRepos.length}] Scraping ${repository}...`,
+    );
+
+    const opts = {
+      pool,
+      org,
+      repo: repository,
+      since,
+      botUsers,
+      logger,
+      branch: defaultBranch,
+    };
+
+    const commitOpts = {
+      defaultBranch,
+      pointsOnDefaultBranch,
+      pointsOnNonDefaultBranch,
+    };
+
+    const sources: Record<string, SourceProgress> = {};
+
+    /**
+     * Isolates one data source: an unrecoverable failure degrades only that
+     * source, leaving the rest of the repository's activities intact.
+     */
+    const collect = async <T>(
+      name: string,
+      fetch: () => Promise<FetchResult<T>>,
+      toActivities: (items: T[]) => Activity[],
+    ): Promise<Activity[]> => {
+      try {
+        const result = await fetch();
+        sources[name] = result.partial
+          ? { status: "partial", error: result.error }
+          : { status: "completed" };
+        return toActivities(result.items);
+      } catch (error) {
+        sources[name] = { status: "failed", error: describeError(error) };
+        logger.error(
+          `Source '${name}' failed for ${repository}`,
+          error as Error,
+          { repo: repository, source: name },
+        );
+        return [];
+      }
+    };
+
+    const collected = await Promise.all([
+      collect(
+        "issues",
+        () => getIssues(opts),
+        (items) => activitiesFromIssues(items, repository),
+      ),
+      collect(
+        "comments",
+        () => getComments(opts),
+        (items) => activitiesFromComments(items, repository),
+      ),
+      collect(
+        "pull_requests",
+        () => getPRsAndReviews(opts),
+        (items) => activitiesFromPullRequests(items, repository),
+      ),
+      collect(
+        "branch_commits",
+        () => getBranchCommits(opts),
+        (items) => getActivitiesFromCommits(items, commitOpts),
+      ),
+      collect(
+        "push_commits",
+        () =>
+          scrapeDays
+            ? getCommitsFromPushEvents(opts)
+            : Promise.resolve(complete<CommitRecord>([])),
+        (items) => getActivitiesFromCommits(items, commitOpts),
+      ),
+    ]);
+
+    const seenSlugs = new Set<string>();
+    const repoActivities: Activity[] = collected
+      .flat()
+      .filter((a) => !disabledSlugs.has(a.activity_definition))
+      .filter((a) => !contributorBlacklist.has(a.contributor))
+      .filter((a) => {
+        if (seenSlugs.has(a.slug)) return false;
+        seenSlugs.add(a.slug);
+        return true;
+      });
+
+    const defaultRole =
+      typeof config.defaultRole === "string"
+        ? config.defaultRole
+        : "contributor";
+
+    const degradedSources = Object.entries(sources).filter(
+      ([, state]) => state.status !== "completed",
     );
 
     try {
-      const opts = {
-        pool,
-        org,
-        repo: repository,
-        since,
-        botUsers,
-        logger,
-        branch: defaultBranch,
-      };
-
-      const commitOpts = {
-        defaultBranch,
-        pointsOnDefaultBranch,
-        pointsOnNonDefaultBranch,
-      };
-
-      const repoActivities: Activity[] = (
-        await Promise.all([
-          getIssues(opts),
-          getComments(opts),
-          getPRsAndReviews(opts),
-          getBranchCommits(opts),
-          scrapeDays ? getCommitsFromPushEvents(opts) : Promise.resolve([]),
-        ]).then(([issues, comments, pullRequests, commits]) => [
-          ...activitiesFromIssues(issues, repository),
-          ...activitiesFromComments(comments, repository),
-          ...activitiesFromPullRequests(pullRequests, repository),
-          ...getActivitiesFromCommits(commits, commitOpts),
-          ...getActivitiesFromCommits(commits, commitOpts),
-        ])
-      )
-        .filter((a) => !disabledSlugs.has(a.activity_definition))
-        .filter((a) => !contributorBlacklist.has(a.contributor));
-
-      const defaultRole =
-        typeof config.defaultRole === "string"
-          ? config.defaultRole
-          : "contributor";
-
       const saved = await persistRepoActivities(
         db,
         repoActivities,
@@ -1077,33 +1410,42 @@ export async function getActivities({ db, config, logger }: PluginContext) {
 
       progress.repos[repository] = {
         repo: repository,
-        status: "completed",
+        status: degradedSources.length > 0 ? "partial" : "completed",
         activitiesCount: saved,
         completedAt: new Date().toISOString(),
+        sources,
+        error:
+          degradedSources.length > 0
+            ? `${degradedSources.length} of ${Object.keys(sources).length} sources degraded`
+            : undefined,
       };
-      progress.completedRepos = Object.values(progress.repos).filter(
-        (r) => r.status === "completed",
-      ).length;
       progress.totalActivities += saved;
 
-      logger.info(`Completed ${repository}: ${saved} activities saved`);
+      if (degradedSources.length > 0) {
+        logger.warn(
+          `Partially scraped ${repository}: ${saved} activities saved, degraded sources: ${degradedSources.map(([name]) => name).join(", ")}`,
+        );
+      } else {
+        logger.info(`Completed ${repository}: ${saved} activities saved`);
+      }
     } catch (error) {
-      const errMsg = error instanceof Error ? error.message : String(error);
-
       progress.repos[repository] = {
         repo: repository,
         status: "failed",
         activitiesCount: 0,
-        error: errMsg.slice(0, 200),
+        error: describeError(error),
         completedAt: new Date().toISOString(),
+        sources,
       };
-      progress.failedRepos = Object.values(progress.repos).filter(
-        (r) => r.status === "failed",
-      ).length;
 
-      logger.error(`Failed to scrape ${repository}: ${errMsg}`);
+      logger.error(
+        `Failed to persist activities for ${repository}`,
+        error as Error,
+        { repo: repository },
+      );
     }
 
+    recountStatuses();
     await saveProgress(progress, dataDir);
   }
 
@@ -1116,8 +1458,9 @@ export async function getActivities({ db, config, logger }: PluginContext) {
   logger.info(`Found ${botUsers.size} bot users`);
   await updateBotRoles(db, Array.from(botUsers), logger);
 
+  recountStatuses();
   await saveProgress(progress, dataDir);
   logger.info(
-    `Scrape finished: ${progress.completedRepos} completed, ${progress.failedRepos} failed, ${progress.totalActivities} total activities`,
+    `Scrape finished: ${progress.completedRepos} completed, ${progress.partialRepos} partial, ${progress.failedRepos} failed, ${progress.totalActivities} total activities`,
   );
 }
