@@ -1,5 +1,16 @@
 # @ohcnetwork/leaderboard-github-plugin
 
+## 0.3.0
+
+### Minor Changes
+
+- 3a982a0: Adds support for blacklisting github users
+- b97277f: observability and bug fixes
+
+### Patch Changes
+
+- 7ee1ce0: Add more PR Avg. Turn Around Time datapoints and follow new standards for gloabl aggregates
+
 ## 0.2.0
 
 ### Minor Changes
